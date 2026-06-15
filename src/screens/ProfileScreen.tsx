@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; 
 import { 
   View, 
   Text, 
@@ -11,8 +11,9 @@ import {
   KeyboardAvoidingView, 
   Platform 
 } from 'react-native';
-// 📥 TAMBAHKAN IMPORT INI
-import { useNavigation } from '@react-navigation/native';
+
+// 🌟 Hubungkan ke satpam utama (AuthContext)
+import { useAuth } from '../navigation/AuthContext'; 
 
 const FAQ_DATA = [
   {
@@ -33,39 +34,92 @@ const FAQ_DATA = [
 ];
 
 export default function ProfileScreen() {
-  const [name, setName] = useState('Raihan Alwi Noer');
-  const [phone, setPhone] = useState('081234567890');
+  // 🌟 Ambil fungsi logout dan userId global dari context
+  const { logout, userId } = useAuth(); 
 
+  // State data user dari database
+  const [name, setName] = useState('Loading...');
+  const [phone, setPhone] = useState('Loading...');
+
+  // State untuk Modal Edit Profil
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
-  const [inputName, setInputName] = useState(name);
-  const [inputPhone, setInputPhone] = useState(phone);
+  const [inputName, setInputName] = useState('');
+  const [inputPhone, setInputPhone] = useState('');
 
+  // State FAQ
   const [expandedFaqId, setExpandedFaqId] = useState<number | null>(null);
 
-  // 🚀 PANGGIL HOOK NAVIGASI DI SINI
-  const navigation = useNavigation<any>(); 
+  // 🛠️ URL API Backend dinamis pake ID yang login
+  const API_URL = `http://192.168.2.4:3000/api/users/${userId}`;
 
-  const handleSaveProfile = () => {
+  // 🔄 1. AMBIL DATA DARI POSTGRES PAS HALAMAN DIBUKA ATAU USERID BERUBAH
+  useEffect(() => {
+    if (userId) {
+      fetchUserData();
+    }
+  }, [userId]);
+
+  const fetchUserData = async () => {
+    try {
+      const response = await fetch(API_URL);
+      const data = await response.json();
+      
+      if (response.ok) {
+        setName(data.nama);
+        setPhone(data.nomor_hp);
+        setInputName(data.nama);
+        setInputPhone(data.nomor_hp);
+      } else {
+        Alert.alert('Gagal', 'Gagal mengambil data user dari server');
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Error', 'Gagal konek ke backend. Pastikan server Node.js lu udah nyala!');
+    }
+  };
+
+  // 💾 2. FUNGSI UNTUK SIMPAN PERUBAHAN KE POSTGRES
+  const handleSaveProfile = async () => {
     if (!inputName.trim() || !inputPhone.trim()) {
       Alert.alert('Gagal', 'Nama dan nomor HP gak boleh kosong, bro!');
       return;
     }
-    setName(inputName);
-    setPhone(inputPhone);
-    Alert.alert('Sukses', 'Profil lu berhasil diperbarui!', [
-      { text: 'Mantap', onPress: () => setIsEditModalVisible(false) }
-    ]);
-  };
 
-  const toggleFaq = (id: number) => {
-    if (expandedFaqId === id) {
-      setExpandedFaqId(null);
-    } else {
-      setExpandedFaqId(id);
+    try {
+      const response = await fetch(API_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          nama: inputName,
+          nomor_hp: inputPhone,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        setName(inputName);
+        setPhone(inputPhone);
+        
+        Alert.alert('Sukses', 'Profil lu berhasil diperbarui di Postgres!', [
+          { text: 'Mantap', onPress: () => setIsEditModalVisible(false) }
+        ]);
+      } else {
+        Alert.alert('Waduh', result.message || 'Gagal update data.');
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Error', 'Koneksi ke server terputus.');
     }
   };
 
-  // 🚪 FUNGSI LOGOUT YANG SEKARANG UDAH AKTIF BISA PINDAH HALAMAN
+  const toggleFaq = (id: number) => {
+    setExpandedFaqId(expandedFaqId === id ? null : id);
+  };
+
+  // 🚪 FUNGSI LOGOUT GLOBAL (Disesuaikan jadi Async)
   const handleLogout = () => {
     Alert.alert(
       'Konfirmasi Keluar',
@@ -75,12 +129,12 @@ export default function ProfileScreen() {
         { 
           text: 'Ya, Keluar', 
           style: 'destructive',
-          onPress: () => {
-            // 🔥 KUNCINYA DI SINI: Reset tumpukan halaman, langsung lempar ke 'Login'
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'Login' }], // 👈 Sesuaikan dengan nama route halaman Login di AppNavigator lu
-            });
+          onPress: async () => {
+            try {
+              await logout(); // 🔥 Ditambah 'await' biar proses hapus storage selesai dulu baru navigasi pindah
+            } catch (err) {
+              console.error("Gagal logout:", err);
+            }
           } 
         }
       ]
@@ -88,13 +142,12 @@ export default function ProfileScreen() {
   };
 
   return (
-    // ... Sisa kode return ke bawahnya tetep sama persis ...
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       
       {/* SECTION 1: HEADER & AVATAR KONTEN */}
       <View style={styles.profileHeader}>
         <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>{name.charAt(0).toUpperCase()}</Text>
+          <Text style={styles.avatarText}>{name ? name.charAt(0).toUpperCase() : '?'}</Text>
         </View>
         <Text style={styles.userName}>{name}</Text>
         <Text style={styles.userPhone}>📱 {phone}</Text>
@@ -161,7 +214,7 @@ export default function ProfileScreen() {
         animationType="slide" 
         transparent={true} 
         visible={isEditModalVisible}
-        onRequestClose={() => setIsEditModalVisible(false)} // Biar aman pas user klik tombol back hardware Android
+        onRequestClose={() => setIsEditModalVisible(false)} 
       >
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView 
@@ -207,9 +260,7 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   scrollContent: { paddingTop: 60, paddingBottom: 60 },
-  
   profileHeader: { alignItems: 'center', paddingHorizontal: 20 },
-  // 🔄 Diubah ke properti shadow standar RN biar kompatibel di semua versi cross-platform
   avatarCircle: { 
     width: 90, 
     height: 90, 
@@ -229,9 +280,7 @@ const styles = StyleSheet.create({
   userPhone: { fontSize: 14, color: '#666', marginTop: 4 },
   btnEditTrigger: { marginTop: 15, paddingVertical: 8, paddingHorizontal: 20, borderWidth: 1, borderColor: '#1e1e24', borderRadius: 20 },
   btnEditTriggerText: { color: '#1e1e24', fontWeight: 'bold', fontSize: 13 },
-  
   divider: { height: 8, backgroundColor: '#f5f5f7', marginVertical: 25 },
-
   helpSection: { paddingHorizontal: 20 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e1e24', marginBottom: 4 },
   sectionSubtitle: { fontSize: 13, color: '#666', marginBottom: 15 },
@@ -241,17 +290,14 @@ const styles = StyleSheet.create({
   faqArrow: { fontSize: 12 },
   faqAnswerContainer: { padding: 15, paddingTop: 0, borderTopWidth: 1, borderTopColor: '#f5f5f5' },
   faqAnswer: { fontSize: 13, color: '#555', lineHeight: 18 },
-
   contactTitle: { fontSize: 14, fontWeight: 'bold', color: '#1e1e24', marginTop: 25, marginBottom: 10, textAlign: 'center' },
   contactRow: { flexDirection: 'row', justifyContent: 'space-between' },
   btnContact: { flex: 1, backgroundColor: '#25d366', padding: 12, borderRadius: 8, alignItems: 'center', marginRight: 8 },
   btnContactText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
-
   logoutSection: { paddingHorizontal: 20, alignItems: 'center', marginTop: 10 },
   btnLogout: { width: '100%', borderWidth: 1, borderColor: '#e63946', padding: 15, borderRadius: 8, alignItems: 'center', backgroundColor: '#fff' },
   btnLogoutText: { color: '#e63946', fontWeight: 'bold', fontSize: 15 },
   versionText: { fontSize: 11, color: '#aaa', marginTop: 15 },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 25 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 20, color: '#1e1e24' },

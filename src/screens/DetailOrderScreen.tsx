@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useContext, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -12,12 +12,15 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView, 
   Platform,
-  TouchableWithoutFeedback // 👈 Ditambahkan untuk nutup dropdown menu saat klik luar
+  TouchableWithoutFeedback 
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useOrderStore } from '../store/useOrderStore';
 import { WebView } from 'react-native-webview';
+
+// 📥 Import AuthContext buat tau ID user yang lagi order
+import { AuthContext } from '../navigation/AuthContext'; 
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DetailOrder'>;
 
@@ -29,21 +32,70 @@ interface SearchResult {
 }
 
 export default function DetailOrderScreen({ navigation }: Props) {
+  const { userId } = useContext(AuthContext); // 👤 Ambil ID user dari login session
   const { currentOrder, setCustomerDetails, setPaymentDetails, setLocation } = useOrderStore();
+  
   const [name, setName] = useState('');
   const [contact, setContact] = useState('');
+  const [fullAddress, setFullAddress] = useState(''); 
   const [addressNotes, setAddressNotes] = useState('');
+
+  // 🛡️ BUGS FIX 1 & FEATURE 2: Kunci Koordinat GPS Asli Saat Pertama Kali Masuk Layar
+  const initialGPS = useRef({ lat: currentOrder.latitude, lng: currentOrder.longitude });
 
   // State Modal Pencarian Alamat
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false); // ⏳ Loading pas klik pesan
 
-  // 🕵️ State untuk Toggle Menu Titik 3 (Info Versi)
+  // State untuk Toggle Menu Titik 3
   const [isMenuVisible, setIsMenuVisible] = useState(false);
 
   const webViewRef = useRef<WebView>(null);
+
+  // 🛠️ FUNGSI BARU: Mengubah Koordinat Angka Menjadi Teks Alamat Asli (Reverse Geocoding)
+  const fetchAddressFromCoords = async (lat: number, lng: number) => {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+        { headers: { 'User-Agent': 'BarberOnCallApp' } }
+      );
+      const data = await response.json();
+      if (data && data.display_name) {
+        setFullAddress(data.display_name); // Set teks alamat otomatis ke form input
+      }
+    } catch (error) {
+      console.error('Gagal mengambil nama jalan dari GPS:', error);
+    }
+  };
+
+  // 🛠️ BUGS FIX 1: Jalankan pencarian nama jalan otomatis begitu halaman dibuka pertama kali
+  useEffect(() => {
+    if (currentOrder.latitude && currentOrder.longitude) {
+      fetchAddressFromCoords(currentOrder.latitude, currentOrder.longitude);
+    }
+  }, []);
+
+  // 🛠️ FEATURE 2: Fungsi untuk mengembalikan peta dan teks alamat ke posisi GPS HP yang asli
+  const handleResetToRealGPS = () => {
+    const { lat, lng } = initialGPS.current;
+    
+    // Kembalikan koordinat di Zustand Store
+    setLocation(lat, lng);
+    
+    // Cari ulang nama jalannya biar form keisi alamat awal kembali
+    fetchAddressFromCoords(lat, lng);
+    
+    // Suntik kodingan JS ke WebView biar petanya terbang balik fokus ke GPS awal
+    const jsCode = `
+      if (typeof map !== 'undefined') {
+        map.setView([${lat}, ${lng}], 16);
+      }
+    `;
+    webViewRef.current?.injectJavaScript(jsCode);
+  };
 
   const handleMapMessage = (event: any) => {
     try {
@@ -77,11 +129,12 @@ export default function DetailOrderScreen({ navigation }: Props) {
     }
   };
 
-  const handleSelectAddress = (lat: string, lon: string) => {
+  const handleSelectAddress = (lat: string, lon: string, displayName: string) => {
     const latitude = parseFloat(lat);
     const longitude = parseFloat(lon);
     
     setLocation(latitude, longitude);
+    setFullAddress(displayName); 
     setIsModalVisible(false);
     setSearchQuery('');
     setSearchResults([]);
@@ -94,9 +147,9 @@ export default function DetailOrderScreen({ navigation }: Props) {
     webViewRef.current?.injectJavaScript(jsCode);
   };
 
-  const handleNext = () => {
-    if (!name || !contact) {
-      Alert.alert('Gagal', 'Mohon isi nama dan nomor kontak dahulu!');
+  const handleNext = async () => {
+    if (!name || !contact || !fullAddress) {
+      Alert.alert('Gagal', 'Mohon isi nama, kontak, dan alamat lengkap dahulu!');
       return;
     }
 
@@ -106,9 +159,38 @@ export default function DetailOrderScreen({ navigation }: Props) {
     }
 
     setCustomerDetails(name, contact, addressNotes);
-    
-    const mockOrderId = 'BOC-' + Math.floor(100000 + Math.random() * 900000);
-    navigation.navigate('Result', { orderId: mockOrderId });
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch('http://192.168.2.4:3000/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: userId || 1, 
+          layanan: currentOrder.serviceType,
+          harga: currentOrder.totalFee,
+          alamat: fullAddress, 
+          catatanAlamat: addressNotes || '-',
+          namaPenerima: name, 
+          kontakPenerima: contact 
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        navigation.navigate('Result', { orderId: `BOC-${result.orderId}` });
+      } else {
+        Alert.alert('Gagal Kirim', result.error || 'Terjadi kesalahan pada server');
+      }
+    } catch (error) {
+      console.error('Error post order:', error);
+      Alert.alert('Koneksi Error', 'Gagal terhubung ke server backend.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -116,7 +198,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
       style={styles.container}
     >
-      {/* 👑 PREMIUM STICKY HEADER (BACK BUTTON & TITIK 3 TOGGLE) */}
+      {/* 👑 PREMIUM STICKY HEADER */}
       <View style={styles.customHeader}>
         <TouchableOpacity style={styles.headerActionBtn} onPress={() => navigation.goBack()}>
           <Text style={styles.backArrowText}>←</Text>
@@ -129,7 +211,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
         </TouchableOpacity>
       </View>
 
-      {/* BODY UTAMA (SCROLLABLE KONTEN) */}
+      {/* BODY UTAMA */}
       <ScrollView 
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scrollContent}
@@ -203,6 +285,12 @@ export default function DetailOrderScreen({ navigation }: Props) {
           <TouchableOpacity style={styles.btnSearchLocation} onPress={() => setIsModalVisible(true)}>
             <Text style={styles.btnSearchLocationText}>🔍 Cari & Ketik Alamat Tujuan</Text>
           </TouchableOpacity>
+          
+          {/* 🛠️ FEATURE 2: TOMBOL RESET KEMBALI KE REAL GPS */}
+          <TouchableOpacity style={styles.btnResetGPS} onPress={handleResetToRealGPS}>
+            <Text style={styles.btnResetGPSText}>🎯 Gunakan Lokasi GPS Saat Ini</Text>
+          </TouchableOpacity>
+
           <Text style={styles.hintText}>📍 Geser petanya saja, peniti merah akan selalu mengunci titik tengah rumah lu.</Text>
         </View>
 
@@ -224,6 +312,16 @@ export default function DetailOrderScreen({ navigation }: Props) {
             placeholder="Contoh: 081234567890" 
             keyboardType="numeric"
             maxLength={12}
+          />
+
+          <Text style={styles.label}>Alamat Lengkap</Text>
+          <TextInput 
+            style={[styles.input, styles.textArea]} 
+            value={fullAddress} 
+            onChangeText={setFullAddress} 
+            placeholder="Mencari alamat GPS..." 
+            multiline={true}
+            numberOfLines={3}
           />
 
           <Text style={styles.label}>Catatan Alamat (Patokan Rumah)</Text>
@@ -261,20 +359,28 @@ export default function DetailOrderScreen({ navigation }: Props) {
             <Text style={styles.total}>Total Biaya: Rp {currentOrder.totalFee.toLocaleString()}</Text>
           </View>
 
-          <TouchableOpacity style={styles.btnNext} onPress={handleNext}>
-            <Text style={styles.btnNextText}>Konfirmasi & Pesan (Next)</Text>
+          <TouchableOpacity 
+            style={[styles.btnNext, isSubmitting && { opacity: 0.6 }]} 
+            onPress={handleNext}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.btnNextText}>Konfirmasi & Pesan (Next)</Text>
+            )}
           </TouchableOpacity>
         </View>
       </ScrollView>
 
-      {/* ==================== 🛠️ DROPDOWN MODAL TITIK 3 (VERSI APLIKASI) ==================== */}
+      {/* DROPDOWN MODAL TITIK 3 */}
       <Modal animationType="fade" transparent={true} visible={isMenuVisible}>
         <TouchableWithoutFeedback onPress={() => setIsMenuVisible(false)}>
           <View style={styles.menuOverlay}>
             <View style={styles.dropdownBox}>
               <Text style={styles.menuTitle}>ℹ️ Info Aplikasi</Text>
               <View style={styles.menuDivider} />
-              <Text style={styles.versionText}>Versi: **v1.0.0-Beta**</Text>
+              <Text style={styles.versionText}>Versi: v1.0.0-Beta</Text>
               <Text style={styles.buildText}>Build: 2026.06.13</Text>
               
               <TouchableOpacity style={styles.btnCloseMenu} onPress={() => setIsMenuVisible(false)}>
@@ -309,7 +415,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
               data={searchResults}
               keyExtractor={(item) => item.place_id.toString()}
               renderItem={({ item }) => (
-                <TouchableOpacity style={styles.resultItem} onPress={() => handleSelectAddress(item.lat, item.lon)}>
+                <TouchableOpacity style={styles.resultItem} onPress={() => handleSelectAddress(item.lat, item.lon, item.display_name)}>
                   <Text style={styles.resultItemText} numberOfLines={2}>{item.display_name}</Text>
                 </TouchableOpacity>
               )}
@@ -328,8 +434,6 @@ export default function DetailOrderScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  
-  // 💎 STYLES BARU: Sticky Custom Header Layout
   customHeader: { 
     flexDirection: 'row', 
     height: 60, 
@@ -339,30 +443,25 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, 
     borderBottomColor: '#eee', 
     backgroundColor: '#fff',
-    // Penyelamat area notch layar HP modern (iOS & Android)
     paddingTop: Platform.OS === 'ios' ? 15 : 0,
     marginTop: Platform.OS === 'ios' ? 35 : 25
   },
-  headerActionBtn: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  headerActionBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
   backArrowText: { fontSize: 24, fontWeight: 'bold', color: '#1e1e24' },
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e1e24', textAlign: 'center', flex: 1 },
   tripleDotText: { fontSize: 24, fontWeight: 'bold', color: '#1e1e24' },
-
-  // Content adjust pasca header dipisah
   scrollContent: { paddingTop: 10, paddingBottom: 40 },
   subHeaderTitle: { fontSize: 14, fontWeight: '500', textAlign: 'center', color: '#666', marginBottom: 15 },
-
   mapContainer: { height: 240, width: '100%', backgroundColor: '#eee', position: 'relative' },
   actionMapContainer: { paddingHorizontal: 20, marginTop: 12 },
   btnSearchLocation: { backgroundColor: '#1e1e24', padding: 12, borderRadius: 8, alignItems: 'center' },
   btnSearchLocationText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+  
+  // 🎨 STYLING BARU UNTUK TOMBOL RESET GPS
+  btnResetGPS: { backgroundColor: '#fff', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: '#1e1e24' },
+  btnResetGPSText: { color: '#1e1e24', fontWeight: 'bold', fontSize: 14 },
+  
   hintText: { fontSize: 11, color: '#e63946', marginTop: 6, fontStyle: 'italic', textAlign: 'center', fontWeight: '500' },
-
   form: { padding: 20 },
   label: { fontWeight: 'bold', marginTop: 15, marginBottom: 5 },
   input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, fontSize: 16, backgroundColor: '#fff' },
@@ -377,17 +476,14 @@ const styles = StyleSheet.create({
   total: { fontWeight: 'bold', fontSize: 16, marginTop: 5, color: '#e63946' },
   btnNext: { backgroundColor: '#1e1e24', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 25 },
   btnNextText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-
-  // 🕵️ STYLES BARU: Dropdown Popover Titik 3
   menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'flex-start', alignItems: 'flex-end' },
   dropdownBox: { 
     backgroundColor: '#fff', 
     width: 180, 
-    marginTop: Platform.OS === 'ios' ? 105 : 85, // nempel pas di bawah tombol titik 3 header
+    marginTop: Platform.OS === 'ios' ? 105 : 85, 
     marginRight: 15, 
     borderRadius: 8, 
     padding: 15,
-    boxShadow: '0px 5px 15px rgba(0,0,0,0.2)',
     elevation: 5 
   },
   menuTitle: { fontSize: 13, fontWeight: 'bold', color: '#666' },
@@ -396,7 +492,6 @@ const styles = StyleSheet.create({
   buildText: { fontSize: 11, color: '#999', marginTop: 2 },
   btnCloseMenu: { marginTop: 12, backgroundColor: '#f0f0f3', paddingVertical: 6, borderRadius: 4, alignItems: 'center' },
   btnCloseMenuText: { color: '#333', fontSize: 12, fontWeight: '600' },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' },
   modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#1e1e24' },

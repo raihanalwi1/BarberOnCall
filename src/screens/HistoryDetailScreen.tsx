@@ -2,69 +2,72 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import CustomHeader from '../components/CustomHeader'; // 👈 Pakai komponen rakitan kita!
+import CustomHeader from '../components/CustomHeader'; 
+
+type HistoryOrder = {
+  orderId: string;
+  service: string;
+  date: string;
+  price: string;
+  status: string;
+  customerName: string;
+  address: string;
+  addressNotes?: string;
+  contact?: string;
+  paymentMethod?: string;
+};
 
 type Props = NativeStackScreenProps<RootStackParamList, 'HistoryDetail'>;
 
-// Mock database mini yang sudah DISESUAIKAN dengan data pelanggan & lokasi dinamis
-const DETAILS_DATABASE: Record<string, any> = {
-  'BOC-782190': {
-    service: 'Haircut + Head Massage Premium',
-    price: 'Rp 75.000',
-    appFee: 'Rp 2.000',
-    total: 'Rp 77.000',
-    date: '13 Juni 2026',
-    barber: 'Abang Junaedi',
-    method: 'E-Wallet (GoPay)',
-    customerName: 'Raihan Alwi Noer',
-    customerPhone: '081234567890',
-    address: 'Harapan Indah, Blok C4 No. 12, Bekasi, Jawa Barat',
-    notes: 'Rumah pagar hitam, depan warung Madura.'
-  },
-  'BOC-110293': {
-    service: 'Gentlemen Hair Dyeing (Pewarnaan)',
-    price: 'Rp 118.000',
-    appFee: 'Rp 2.000',
-    total: 'Rp 120.000',
-    date: '28 Mei 2026',
-    barber: 'Abang Supriadi',
-    method: 'Tunai (COD)',
-    customerName: 'Raihan Alwi Noer',
-    customerPhone: '081234567890',
-    address: 'Jl. Boulevard Raya No. 45, Kelapa Gading, Jakarta Utara',
-    notes: 'Kantor ruko lantai 2, sebelah barbershop lama.'
+export default function HistoryDetailScreen({ route, navigation }: Props) {
+  // 📥 1. AMBIL DATA ASLI DARI DATABASE YANG DIKIRIM VIA NAVIGASI
+  const order = route.params?.order as HistoryOrder | undefined;
+  const paymentMethod = order?.paymentMethod || 'Tunai / COD';
+
+  // 🛡️ Fallback kalau tiba-tiba datanya kosong pas loading
+  if (!order) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <Text style={{ color: 'red' }}>Gagal memuat detail pesanan!</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginTop: 20 }}>
+          <Text>Kembali</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
-};
 
-export default function HistoryDetailScreen({ route }: Props) {
-  // 📥 AMBIL OBJEK 'order' DULU, BARU EKSTRAK ID-NYA
-  const { order } = route.params;
-  const orderId = order.orderId;
-
-  // Tarik data spesifik berdasarkan ID
-  const dataPesanan = DETAILS_DATABASE[orderId] || DETAILS_DATABASE['BOC-782190'];
+  // 2. KITA PAKE DATA 'order' LANGSUNG
   return (
     <View style={styles.container}>
       {/* HEADER MODULAR SAKTI */}
       <CustomHeader title="Detail Riwayat" />
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Banner Status */}
+        {/* Banner Status Dinamis */}
         <View style={styles.statusBanner}>
-          <Text style={styles.statusIcon}>✅</Text>
-          <Text style={styles.statusText}>Pesanan Selesai</Text>
-          <Text style={styles.statusSubtext}>Terima kasih sudah memotong rambut bersama kami!</Text>
+          <Text style={styles.statusIcon}>
+            {order.status === 'Selesai' ? '✅' : '⏳'}
+          </Text>
+          <Text style={[styles.statusText, order.status !== 'Selesai' && { color: '#f77f00' }]}>
+            Pesanan {order.status}
+          </Text>
+          <Text style={styles.statusSubtext}>
+            {order.status === 'Selesai' 
+              ? 'Terima kasih sudah memotong rambut bersama kami!' 
+              : 'Tukang cukur sedang memproses pesanan lu.'}
+          </Text>
         </View>
 
         {/* Info Utama Card */}
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>ID Pesanan</Text>
-            <Text style={styles.infoValueBold}>{orderId}</Text> 
+            {/* Format ID biar ada BOC- nya */}
+            <Text style={styles.infoValueBold}>BOC - {order.orderId}</Text> 
           </View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Tanggal</Text>
-            <Text style={styles.infoValue}>{dataPesanan.date}</Text>
+            <Text style={styles.infoValue}>{order.date}</Text>
           </View>
         </View>
 
@@ -72,25 +75,27 @@ export default function HistoryDetailScreen({ route }: Props) {
         <Text style={styles.sectionTitle}>✂️ Detail Layanan</Text>
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
-            <Text style={styles.infoValueBold}>{dataPesanan.service}</Text>
-            <Text style={styles.infoValue}>{dataPesanan.price}</Text>
+            <Text style={styles.infoValueBold}>{order.service}</Text>
+            <Text style={styles.infoValue}>{order.price}</Text>
           </View>
           <View style={styles.menuDivider} />
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Barber</Text>
-            <Text style={styles.infoValue}>{dataPesanan.barber}</Text>
+            {/* Karena DB belum ada spesifik tukang cukur, kita fallback dulu */}
+            <Text style={styles.infoValue}>Menunggu Konfirmasi</Text>
           </View>
         </View>
 
-        {/* 📍 SEKSI BARU: Lokasi & Penerima Dinamis (Sudah Disesuaikan) */}
+        {/* 📍 Lokasi & Penerima Dinamis */}
         <Text style={styles.sectionTitle}>📍 Lokasi & Penerima</Text>
         <View style={styles.infoCard}>
-          <Text style={styles.infoValueBold}>{dataPesanan.customerName}</Text>
-          <Text style={styles.addressContactText}>📱 {dataPesanan.customerPhone}</Text>
+          <Text style={styles.infoValueBold}>{order.customerName}</Text>
+          {/* Kalau kontak belum dilempar dari HistoryScreen, kasih strip dulu */}
+          <Text style={styles.addressContactText}>📱 {order.contact || '-'}</Text>
           <View style={styles.menuDivider} />
           <Text style={styles.addressLabel}>Alamat Tujuan:</Text>
-          <Text style={styles.addressValue}>{dataPesanan.address}</Text>
-          <Text style={styles.notesValue}>*Catatan: {dataPesanan.notes}</Text>
+          <Text style={styles.addressValue}>{order.address}</Text>
+          <Text style={styles.notesValue}>*Catatan: {order.addressNotes || '-'}</Text>
         </View>
 
         {/* Rincian Pembayaran */}
@@ -98,20 +103,13 @@ export default function HistoryDetailScreen({ route }: Props) {
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Metode Pembayaran</Text>
-            <Text style={styles.infoValueBold}>{dataPesanan.method}</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Biaya Layanan</Text>
-            <Text style={styles.infoValue}>{dataPesanan.price}</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Biaya Aplikasi</Text>
-            <Text style={styles.infoValue}>{dataPesanan.appFee}</Text>
+            {/* Fallback metode, karena kita blm simpen ini di DB PostgreSQL */}
+            <Text style={styles.infoValueBold}>{paymentMethod}</Text>
           </View>
           <View style={styles.menuDivider} />
           <View style={styles.infoRow}>
             <Text style={styles.totalLabel}>Total Bayar</Text>
-            <Text style={styles.totalValue}>{dataPesanan.total}</Text>
+            <Text style={styles.totalValue}>{order.price}</Text>
           </View>
         </View>
 
@@ -123,6 +121,7 @@ export default function HistoryDetailScreen({ route }: Props) {
   );
 }
 
+// Styles persis sama kayak yang lu punya, gak diubah sedikitpun
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8f9fa' },
   scrollContent: { paddingHorizontal: 20, paddingTop: 15, paddingBottom: 40 },
@@ -141,8 +140,6 @@ const styles = StyleSheet.create({
   totalValue: { fontSize: 16, fontWeight: 'bold', color: '#e63946' },
   btnReorder: { backgroundColor: '#1e1e24', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 25 },
   btnReorderText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
-  
-  // Styles Tambahan untuk komponen Alamat Lokasi
   addressContactText: { fontSize: 13, color: '#666', marginTop: 2 },
   addressLabel: { fontSize: 12, color: '#999', fontWeight: 'bold', marginTop: 4 },
   addressValue: { fontSize: 13, color: '#333', marginTop: 2, lineHeight: 18 },

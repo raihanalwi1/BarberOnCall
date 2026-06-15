@@ -42,6 +42,7 @@ export default function ResultScreen({ route, navigation }: Props) {
       </View>
 
       <Text style={styles.trackTitle}>🚴 Live Track Tukang Cukur:</Text>
+      
       <MapView
         style={styles.map}
         initialRegion={{
@@ -57,10 +58,10 @@ export default function ResultScreen({ route, navigation }: Props) {
         <Marker coordinate={barberCoords} title="Tukang Cukur" pinColor="red" />
       </MapView>
 
-      // Ganti bagian onPress menjadi MainApp
-        <TouchableOpacity style={styles.btnHome} onPress={() => { resetOrder(); navigation.navigate('MainApp'); }}>
+      {/* 🛠️ FIX: Komentar perbaikan tadi sudah dihapus agar tidak dibaca sebagai string teks bebas */}
+      <TouchableOpacity style={styles.btnHome} onPress={() => { resetOrder(); navigation.navigate('MainApp'); }}>
         <Text style={styles.btnHomeText}>Kembali ke Home</Text>
-        </TouchableOpacity>
+      </TouchableOpacity>
     </View>
   );
 }
