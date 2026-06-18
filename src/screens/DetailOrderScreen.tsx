@@ -18,9 +18,9 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useOrderStore } from '../store/useOrderStore';
 import { WebView } from 'react-native-webview';
-
-// 📥 Import AuthContext buat tau ID user yang lagi order
-import { AuthContext } from '../navigation/AuthContext'; 
+import * as Location from 'expo-location';
+import { AuthContext } from '../navigation/AuthContext';
+import appJson from '../../app.json';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DetailOrder'>;
 
@@ -32,7 +32,7 @@ interface SearchResult {
 }
 
 export default function DetailOrderScreen({ navigation }: Props) {
-  const { userId } = useContext(AuthContext); // 👤 Ambil ID user dari login session
+  const { userId } = useContext(AuthContext); 
   const { currentOrder, setCustomerDetails, setPaymentDetails, setLocation } = useOrderStore();
   
   const [name, setName] = useState('');
@@ -40,61 +40,77 @@ export default function DetailOrderScreen({ navigation }: Props) {
   const [fullAddress, setFullAddress] = useState(''); 
   const [addressNotes, setAddressNotes] = useState('');
 
-  // 🛡️ BUGS FIX 1 & FEATURE 2: Kunci Koordinat GPS Asli Saat Pertama Kali Masuk Layar
-  const initialGPS = useRef({ lat: currentOrder.latitude, lng: currentOrder.longitude });
-
-  // State Modal Pencarian Alamat
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false); // ⏳ Loading pas klik pesan
+  
+  // 🛠️ FIX 1: PISAHIN STATE LOADING BIAR GAK BENTROK
+  const [isFetchingGPS, setIsFetchingGPS] = useState(false); 
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  
+  const [hasSearched, setHasSearched] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false); 
 
-  // State untuk Toggle Menu Titik 3
   const [isMenuVisible, setIsMenuVisible] = useState(false);
-
   const webViewRef = useRef<WebView>(null);
 
-  // 🛠️ FUNGSI BARU: Mengubah Koordinat Angka Menjadi Teks Alamat Asli (Reverse Geocoding)
   const fetchAddressFromCoords = async (lat: number, lng: number) => {
     try {
       const response = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
-        { headers: { 'User-Agent': 'BarberOnCallApp' } }
+        { headers: { 'User-Agent': 'BarberOnCallApp-v1.1', 'Accept': 'application/json' } } 
       );
-      const data = await response.json();
-      if (data && data.display_name) {
-        setFullAddress(data.display_name); // Set teks alamat otomatis ke form input
+      
+      const text = await response.text();
+      if (text.trim().startsWith('{')) {
+        const data = JSON.parse(text);
+        if (data && data.display_name) {
+          setFullAddress(data.display_name);
+        }
       }
     } catch (error) {
       console.error('Gagal mengambil nama jalan dari GPS:', error);
     }
   };
 
-  // 🛠️ BUGS FIX 1: Jalankan pencarian nama jalan otomatis begitu halaman dibuka pertama kali
   useEffect(() => {
-    if (currentOrder.latitude && currentOrder.longitude) {
+    if (currentOrder.latitude && currentOrder.longitude && fullAddress === '') {
       fetchAddressFromCoords(currentOrder.latitude, currentOrder.longitude);
     }
   }, []);
 
-  // 🛠️ FEATURE 2: Fungsi untuk mengembalikan peta dan teks alamat ke posisi GPS HP yang asli
-  const handleResetToRealGPS = () => {
-    const { lat, lng } = initialGPS.current;
+  const handleResetToRealGPS = async () => {
+    setIsFetchingGPS(true); // Pake state khusus GPS
     
-    // Kembalikan koordinat di Zustand Store
-    setLocation(lat, lng);
-    
-    // Cari ulang nama jalannya biar form keisi alamat awal kembali
-    fetchAddressFromCoords(lat, lng);
-    
-    // Suntik kodingan JS ke WebView biar petanya terbang balik fokus ke GPS awal
-    const jsCode = `
-      if (typeof map !== 'undefined') {
-        map.setView([${lat}, ${lng}], 16);
+    try {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Akses Ditolak', 'Izinkan aplikasi ngakses lokasi lu dulu di pengaturan HP.');
+        setIsFetchingGPS(false);
+        return;
       }
-    `;
-    webViewRef.current?.injectJavaScript(jsCode);
+
+      let location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const lat = location.coords.latitude;
+      const lng = location.coords.longitude;
+      
+      setLocation(lat, lng);
+      fetchAddressFromCoords(lat, lng);
+      
+      const jsCode = `
+        if (typeof map !== 'undefined') {
+          map.setView([${lat}, ${lng}], 16);
+        }
+      `;
+      webViewRef.current?.injectJavaScript(jsCode);
+      
+      setIsModalVisible(false);
+
+    } catch (error) {
+      Alert.alert('GPS Tidak Aktif', 'Nyalain dulu GPS HP lu cuy, terus pencet tombol ini lagi.');
+    } finally {
+      setIsFetchingGPS(false); // Matiin loading GPS
+    }
   };
 
   const handleMapMessage = (event: any) => {
@@ -109,23 +125,55 @@ export default function DetailOrderScreen({ navigation }: Props) {
   };
 
   const handleSearchAddress = async () => {
-    if (!searchQuery.trim()) {
+    const query = searchQuery.trim();
+    
+    if (!query) {
       Alert.alert('Peringatan', 'Ketik alamatnya dulu bro!');
       return;
     }
 
-    setIsSearching(true);
+    if (query.length < 3) {
+      Alert.alert('Peringatan', 'Ketik minimal 3 huruf buat nyari alamat (contoh: Ban...)!');
+      return;
+    }
+
+    setIsSearchingAddress(true); // Pake state khusus Pencarian Alamat
+    setHasSearched(false);
     try {
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&countrycodes=id&limit=5`,
-        { headers: { 'User-Agent': 'BarberOnCallApp' } }
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=id&limit=5`,
+        { 
+          headers: { 
+            'User-Agent': `BarberApp_${Math.random().toString(36).substring(7)}`, 
+            'Accept': 'application/json' 
+          } 
+        }
       );
-      const data = await response.json();
-      setSearchResults(data);
+      
+      const text = await response.text();
+      
+      if (text.trim().startsWith('[')) {
+        const data = JSON.parse(text);
+        
+        if (data.length === 0) {
+          // Gak usah pake alert lagi, biar UI Empty State yang jalan
+          setSearchResults([]);
+        } else {
+          setSearchResults(data);
+        }
+        setHasSearched(true);
+      } else {
+        console.warn('Kena Limit Server Nominatim:', text);
+        Alert.alert(
+          'Server Peta Sibuk 🚦', 
+          'Pencarian alamat lagi kena limit dari server pusat. Coba geser-geser petanya secara manual aja dulu ya cuy!'
+        );
+      }
     } catch (error) {
-      Alert.alert('Error', 'Gagal mencari alamat, cek koneksi internet.');
+      console.error('Error nyari alamat:', error);
+      Alert.alert('Koneksi Error', 'Gagal mencari alamat. Pastikan kuota dan sinyal lu aman.');
     } finally {
-      setIsSearching(false);
+      setIsSearchingAddress(false); // Matiin loading Pencarian Alamat
     }
   };
 
@@ -198,7 +246,6 @@ export default function DetailOrderScreen({ navigation }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
       style={styles.container}
     >
-      {/* 👑 PREMIUM STICKY HEADER */}
       <View style={styles.customHeader}>
         <TouchableOpacity style={styles.headerActionBtn} onPress={() => navigation.goBack()}>
           <Text style={styles.backArrowText}>←</Text>
@@ -211,14 +258,12 @@ export default function DetailOrderScreen({ navigation }: Props) {
         </TouchableOpacity>
       </View>
 
-      {/* BODY UTAMA */}
       <ScrollView 
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scrollContent}
       >
         <Text style={styles.subHeaderTitle}>Konfirmasi Layanan: {currentOrder.serviceType}</Text>
         
-        {/* PETA SAKTI GAYA GOJEK */}
         <View style={styles.mapContainer}>
           <WebView
             ref={webViewRef}
@@ -285,23 +330,16 @@ export default function DetailOrderScreen({ navigation }: Props) {
           <TouchableOpacity style={styles.btnSearchLocation} onPress={() => setIsModalVisible(true)}>
             <Text style={styles.btnSearchLocationText}>🔍 Cari & Ketik Alamat Tujuan</Text>
           </TouchableOpacity>
-          
-          {/* 🛠️ FEATURE 2: TOMBOL RESET KEMBALI KE REAL GPS */}
-          <TouchableOpacity style={styles.btnResetGPS} onPress={handleResetToRealGPS}>
-            <Text style={styles.btnResetGPSText}>🎯 Gunakan Lokasi GPS Saat Ini</Text>
-          </TouchableOpacity>
-
           <Text style={styles.hintText}>📍 Geser petanya saja, peniti merah akan selalu mengunci titik tengah rumah lu.</Text>
         </View>
 
-        {/* FORM UTAMA */}
         <View style={styles.form}>
           <Text style={styles.label}>Nama Pemesan / Penerima</Text>
           <TextInput 
             style={styles.input} 
             value={name} 
             onChangeText={setName} 
-            placeholder="Masukkan nama penerima" 
+            placeholder="Masukkan nama Lengkap" 
           />
 
           <Text style={styles.label}>Nomor Kontak (Harus 12 Angka)</Text>
@@ -380,7 +418,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
             <View style={styles.dropdownBox}>
               <Text style={styles.menuTitle}>ℹ️ Info Aplikasi</Text>
               <View style={styles.menuDivider} />
-              <Text style={styles.versionText}>Versi: v1.0.0-Beta</Text>
+              <Text style={styles.versionText}>Versi: v{appJson.expo.version}</Text>
               <Text style={styles.buildText}>Build: 2026.06.13</Text>
               
               <TouchableOpacity style={styles.btnCloseMenu} onPress={() => setIsMenuVisible(false)}>
@@ -397,10 +435,22 @@ export default function DetailOrderScreen({ navigation }: Props) {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Cari Alamat Tujuan</Text>
             
+            <TouchableOpacity 
+              style={[styles.btnResetGPS, isFetchingGPS && { opacity: 0.6 }, { marginBottom: 15 }]} 
+              onPress={handleResetToRealGPS}
+              disabled={isFetchingGPS}
+            >
+              {isFetchingGPS ? (
+                <ActivityIndicator color="#1e1e24" size="small" />
+              ) : (
+                <Text style={styles.btnResetGPSText}>🎯 Gunakan Lokasi GPS Saat Ini</Text>
+              )}
+            </TouchableOpacity>
+
             <View style={styles.searchBarRow}>
               <TextInput 
                 style={styles.searchInput}
-                placeholder="Ketik alamat (Contoh: Harapan Indah Bekasi)"
+                placeholder="Ketik alamat (Contoh: Harapan Indah)"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
@@ -409,18 +459,32 @@ export default function DetailOrderScreen({ navigation }: Props) {
               </TouchableOpacity>
             </View>
 
-            {isSearching && <ActivityIndicator size="large" color="#1e1e24" style={{ marginVertical: 20 }} />}
-
-            <FlatList 
-              data={searchResults}
-              keyExtractor={(item) => item.place_id.toString()}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={styles.resultItem} onPress={() => handleSelectAddress(item.lat, item.lon, item.display_name)}>
-                  <Text style={styles.resultItemText} numberOfLines={2}>{item.display_name}</Text>
-                </TouchableOpacity>
-              )}
-              style={styles.resultList}
-            />
+            {/* 🛠️ FIX 2: Hapus duplikat loading dari sini, cuma sisain yang di dalem ternary */}
+            
+            {isSearchingAddress ? (
+              <ActivityIndicator size="large" color="#1e1e24" style={{ marginVertical: 30 }} />
+            ) : (
+              hasSearched && searchResults.length === 0 ? (
+                <View style={styles.emptySearchContainer}>
+                  <Text style={styles.emptySearchEmoji}>🔍</Text>
+                  <Text style={styles.emptySearchTitle}>Alamat nggak ketemu nih, cuy!</Text>
+                  <Text style={styles.emptySearchSub}>
+                    Coba ketik nama jalan yang lebih spesifik, atau tutup menu ini dan langsung geser-geser petanya aja secara manual.
+                  </Text>
+                </View>
+              ) : (
+                <FlatList 
+                  data={searchResults}
+                  keyExtractor={(item) => item.place_id.toString()}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={styles.resultItem} onPress={() => handleSelectAddress(item.lat, item.lon, item.display_name)}>
+                      <Text style={styles.resultItemText} numberOfLines={2}>{item.display_name}</Text>
+                    </TouchableOpacity>
+                  )}
+                  style={styles.resultList}
+                />
+              )
+            )}
 
             <TouchableOpacity style={styles.btnCancelModal} onPress={() => setIsModalVisible(false)}>
               <Text style={styles.btnCancelModalText}>Batal</Text>
@@ -457,8 +521,7 @@ const styles = StyleSheet.create({
   btnSearchLocation: { backgroundColor: '#1e1e24', padding: 12, borderRadius: 8, alignItems: 'center' },
   btnSearchLocationText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   
-  // 🎨 STYLING BARU UNTUK TOMBOL RESET GPS
-  btnResetGPS: { backgroundColor: '#fff', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: '#1e1e24' },
+  btnResetGPS: { backgroundColor: '#fff', padding: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#1e1e24', justifyContent: 'center' },
   btnResetGPSText: { color: '#1e1e24', fontWeight: 'bold', fontSize: 14 },
   
   hintText: { fontSize: 11, color: '#e63946', marginTop: 6, fontStyle: 'italic', textAlign: 'center', fontWeight: '500' },
@@ -502,6 +565,10 @@ const styles = StyleSheet.create({
   resultList: { marginVertical: 10 },
   resultItem: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#eee' },
   resultItemText: { fontSize: 14, color: '#333' },
+  emptySearchContainer: { alignItems: 'center', paddingVertical: 40 },
+  emptySearchEmoji: { fontSize: 48, marginBottom: 15 },
+  emptySearchTitle: { fontSize: 16, fontWeight: 'bold', color: '#1e1e24', marginBottom: 10 },
+  emptySearchSub: { fontSize: 13, color: '#666', textAlign: 'center', lineHeight: 20 },
   btnCancelModal: { backgroundColor: '#f0f0f3', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
   btnCancelModalText: { color: '#e63946', fontWeight: 'bold', fontSize: 15 }
 });

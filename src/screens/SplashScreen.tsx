@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -15,13 +15,26 @@ export default function SplashScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.logo}>🪒 BarberOnCall</Text>
-      <ActivityIndicator size="large" color="#fff" style={{ marginTop: 20 }} />
+      {/* Panggil logo dari file photo_6168025387766583570_y.jpg */}
+      <Image 
+        source={require('../../assets/logo.jpg')} 
+        style={styles.logo}
+        resizeMode="contain"
+      />
+      <ActivityIndicator size="large" color="#e63946" style={{ marginTop: 30 }} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1e1e24', justifyContent: 'center', alignItems: 'center' },
-  logo: { fontSize: 32, fontWeight: 'bold', color: '#fff' }
+  container: { 
+    flex: 1, 
+    backgroundColor: '#fff', // Latar belakang putih biar logo makin keluar warnanya
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  logo: { 
+    width: 250, 
+    height: 250 // Sesuaikan ukuran logo lu biar pas
+  }
 });
