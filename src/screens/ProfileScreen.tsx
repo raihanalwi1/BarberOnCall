@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'; 
+import React, { useState, useCallback } from 'react'; 
 import { 
   View, 
   Text, 
@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView, 
   Platform 
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 
 // 🌟 Hubungkan ke satpam utama (AuthContext)
 import { useAuth } from '../navigation/AuthContext'; 
@@ -53,30 +54,39 @@ export default function ProfileScreen() {
   const API_URL = `http://192.168.2.4:3000/api/users/${userId}`;
 
   // 🔄 1. AMBIL DATA DARI POSTGRES PAS HALAMAN DIBUKA ATAU USERID BERUBAH
-  useEffect(() => {
-    if (userId) {
-      fetchUserData();
-    }
-  }, [userId]);
+  useFocusEffect(
+    useCallback(() => {
+      const fetchUserData = async () => {
+        console.log(userId);
+        if (!userId){
+          console.log("UserID belum siap, skip fetch...");
+         return; // Kalau belum ada userId, jangan nge-fetch
+        
+        }
+        try {
+          const response = await fetch(API_URL);
+          const result = await response.json(); // Ganti nama ke result biar gak bingung
+          
+          if (response.ok) {
+            // 🔥 INI FIX NYA: Datanya ada di dalem result.data
+            const userData = result.data; 
+            
+            setName(userData.nama);
+            setPhone(userData.nomor_hp);
+            setInputName(userData.nama);
+            setInputPhone(userData.nomor_hp);
+          } else {
+            Alert.alert('Gagal', 'Gagal mengambil data user dari server');
+          }
+        } catch (error) {
+          console.error(error);
+          Alert.alert('Error', 'Gagal konek ke backend.');
+        }
+      };
 
-  const fetchUserData = async () => {
-    try {
-      const response = await fetch(API_URL);
-      const data = await response.json();
-      
-      if (response.ok) {
-        setName(data.nama);
-        setPhone(data.nomor_hp);
-        setInputName(data.nama);
-        setInputPhone(data.nomor_hp);
-      } else {
-        Alert.alert('Gagal', 'Gagal mengambil data user dari server');
-      }
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Gagal konek ke backend. Pastikan server Node.js lu udah nyala!');
-    }
-  };
+      fetchUserData();
+    }, [userId])
+  );
 
   // 💾 2. FUNGSI UNTUK SIMPAN PERUBAHAN KE POSTGRES
   const handleSaveProfile = async () => {
