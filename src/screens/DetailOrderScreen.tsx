@@ -39,6 +39,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
   const [contact, setContact] = useState('');
   const [fullAddress, setFullAddress] = useState(''); 
   const [addressNotes, setAddressNotes] = useState('');
+  const [serviceName, setServiceName] = useState(currentOrder.serviceType); // Default-nya nampilin ID dulu sblm data ke-load
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -78,6 +79,29 @@ export default function DetailOrderScreen({ navigation }: Props) {
       fetchAddressFromCoords(currentOrder.latitude, currentOrder.longitude);
     }
   }, []);
+  useEffect(() => {
+  const fetchServiceName = async () => {
+    try {
+      const response = await fetch('http://192.168.2.4:3000/api/services');
+      const result = await response.json();
+      
+      if (result.success) {
+        // Cocokin ID dari store sama data dari database
+        const matchedService = result.data.find(
+          (s: any) => s.id.toString() === currentOrder.serviceType.toString()
+        );
+        
+        if (matchedService) {
+          setServiceName(matchedService.name); // Timpa ID dengan nama aslinya
+        }
+      }
+    } catch (error) {
+      console.error('Gagal mengambil detail nama layanan:', error);
+    }
+  };
+
+  fetchServiceName();
+}, [currentOrder.serviceType]);
 
   const handleResetToRealGPS = async () => {
     setIsFetchingGPS(true); // Pake state khusus GPS
@@ -262,7 +286,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scrollContent}
       >
-        <Text style={styles.subHeaderTitle}>Konfirmasi Layanan: {currentOrder.serviceType}</Text>
+        <Text style={styles.subHeaderTitle}>Konfirmasi Layanan: {serviceName}</Text>
         
         <View style={styles.mapContainer}>
           <WebView

@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useContext, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { useFocusEffect } from '@react-navigation/native'; // 🌟 Ditambahin biar auto-refresh
+import { getOrderStatusInfo } from '../utils/orderHelper'; // 🌟 Import helper status
 
-// 📥 Import AuthContext buat ngambil userId yang lagi login
 import { AuthContext } from '../navigation/AuthContext'; 
 
 type Props = NativeStackScreenProps<RootStackParamList, 'History'>;
@@ -11,28 +12,50 @@ type Props = NativeStackScreenProps<RootStackParamList, 'History'>;
 export default function HistoryScreen({ navigation }: Props) {
   const { userId } = useContext(AuthContext);
   const [history, setHistory] = useState<any[]>([]);
+  const [services, setServices] = useState<any[]>([]); // 🌟 State baru buat nampung daftar layanan
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        // ⚠️ PENTING: Ganti IP sesuai IP WiFi Laptop lu (Kayak yang di DetailOrderScreen)
-        const response = await fetch(`http://192.168.2.4:3000/api/orders/history/${userId}`);
-        const data = await response.json();
-        setHistory(data);
-      } catch (error) {
-        console.error('Gagal tarik history:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  // 🔄 Tarik data history & service barengan pas halaman dibuka
+  useFocusEffect(
+    useCallback(() => {
+      const fetchData = async () => {
+        if (!userId) {
+          setLoading(false);
+          return;
+        }
 
-    if (userId) {
-      fetchHistory();
-    } else {
-      setLoading(false);
-    }
-  }, [userId]);
+        try {
+          setLoading(true); // Pastikan loading nyala pas mulai fetch
+          
+          // 🔥 Promise.all biar narik 2 API sekaligus, jadi aplikasinya lebih ngebut
+          const [historyRes, servicesRes] = await Promise.all([
+            fetch(`http://192.168.2.4:3000/api/orders/history/${userId}`),
+            fetch(`http://192.168.2.4:3000/api/services`)
+          ]);
+
+          const historyData = await historyRes.json();
+          const servicesData = await servicesRes.json();
+
+          setHistory(historyData);
+          if (servicesData.success) {
+            setServices(servicesData.data);
+          }
+        } catch (error) {
+          console.error('Gagal tarik data:', error);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      fetchData();
+    }, [userId])
+  );
+
+  // 🛠️ FUNGSI BARU: Nyocokin ID Layanan jadi Nama Aslinya
+  const getServiceName = (serviceId: any) => {
+    const matched = services.find((s) => s.id.toString() === serviceId?.toString());
+    return matched ? matched.name : 'Layanan Cukur'; 
+  };
 
   const formatRupiah = (angka: number) => {
     return 'Rp ' + angka.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -43,22 +66,21 @@ export default function HistoryScreen({ navigation }: Props) {
     return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
   };
 
-  // 🎨 FUNGSI BARU: Bikin warna status dinamis sesuai teks
   const getStatusColor = (status: string) => {
     const safeStatus = status ? status.toLowerCase() : '';
     
     if (safeStatus.includes('selesai')) {
-      return { bg: '#e8f5e9', text: '#2b9348' }; // Hijau (Selesai)
+      return { bg: '#e8f5e9', text: '#2b9348' }; 
     } else if (safeStatus.includes('menuju')) {
-      return { bg: '#e0f2fe', text: '#0284c7' }; // Biru (Otw Lokasi)
+      return { bg: '#e0f2fe', text: '#0284c7' }; 
     } else if (safeStatus.includes('berlangsung') || safeStatus.includes('sedang')) {
-      return { bg: '#f3e8ff', text: '#9333ea' }; // Ungu (Lagi Dicukur)
+      return { bg: '#f3e8ff', text: '#9333ea' }; 
     } else if (safeStatus.includes('menunggu') || safeStatus.includes('diproses')) {
-      return { bg: '#fff3cd', text: '#d97706' }; // Kuning (Nunggu Barber)
+      return { bg: '#fff3cd', text: '#d97706' }; 
     } else if (safeStatus.includes('batal') || safeStatus.includes('tidak berhasil')) {
-      return { bg: '#fde8e8', text: '#e63946' }; // Merah (Batal)
+      return { bg: '#fde8e8', text: '#e63946' }; 
     } else {
-      return { bg: '#f0f0f2', text: '#666666' }; // Abu-abu
+      return { bg: '#f0f0f2', text: '#666666' }; 
     }
   };
 
@@ -85,9 +107,8 @@ export default function HistoryScreen({ navigation }: Props) {
           contentContainerStyle={{ paddingBottom: 20 }}
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => {
-            
-            // 🎨 Ambil kode warna yang pas buat item ini
             const statusColor = getStatusColor(item.status);
+            const actualServiceName = getServiceName(item.service); // 🌟 Ambil nama aslinya di sini
 
             return (
               <TouchableOpacity 
@@ -95,7 +116,7 @@ export default function HistoryScreen({ navigation }: Props) {
                 onPress={() => navigation.getParent()?.navigate('HistoryDetail', { 
                   order: {
                     orderId: item.id,
-                    service: item.service,
+                    service: actualServiceName, // 🌟 Pas diklik, data yang dikirim udah nama aslinya
                     date: formatDate(item.date),
                     price: formatRupiah(item.price), 
                     status: item.status,
@@ -109,14 +130,13 @@ export default function HistoryScreen({ navigation }: Props) {
                 <View style={styles.cardHeader}>
                   <Text style={styles.orderIdText}>BOC-{item.id}</Text>
                   
-                  {/* 🎨 Terapkan warna dinamis ke Background & Text */}
                   <View style={[styles.statusBadge, { backgroundColor: statusColor.bg }]}>
                     <Text style={[styles.statusText, { color: statusColor.text }]}>{item.status}</Text>
                   </View>
-
                 </View>
                 
-                <Text style={styles.serviceText}>{item.service}</Text>
+                {/* 🌟 TAMPILIN NAMA LAYANANNYA DI CARD */}
+                <Text style={styles.serviceText}>{actualServiceName}</Text> 
                 
                 <View style={styles.cardFooter}>
                   <Text style={styles.dateText}>{formatDate(item.date)}</Text>
@@ -138,7 +158,6 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   orderIdText: { fontSize: 13, fontWeight: 'bold', color: '#666' },
   
-  // 🛠️ FIX: Hapus warna statis hijau dari sini, biarkan padding & margin saja
   statusBadge: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
   statusText: { fontSize: 11, fontWeight: 'bold' },
   
