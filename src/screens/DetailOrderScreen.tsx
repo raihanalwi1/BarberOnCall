@@ -53,6 +53,9 @@ export default function DetailOrderScreen({ navigation }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false); 
 
   const [isMenuVisible, setIsMenuVisible] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('Tunai'); // Defaultnya Tunai
+  const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
+  const [generatedOrderId, setGeneratedOrderId] = useState<string>('');
   const webViewRef = useRef<WebView>(null);
 
   const fetchAddressFromCoords = async (lat: number, lng: number) => {
@@ -246,16 +249,22 @@ export default function DetailOrderScreen({ navigation }: Props) {
           alamat: fullAddress, 
           catatanAlamat: addressNotes || '-',
           namaPenerima: name, 
-          kontakPenerima: contact 
+          kontakPenerima: contact,
+          metodePembayaran: paymentMethod
         }),
       });
 
       const result = await response.json();
 
       if (response.ok) {
-        navigation.navigate('Result', { orderId: `BOC-${result.orderId}` });
-      } else {
-        Alert.alert('Gagal Kirim', result.error || 'Terjadi kesalahan pada server');
+        // 🔥 LOGIC BARU: Kalau milih E-wallet & dapet URL Xendit, tahan di halaman ini buat nampilin WebView!
+        if (paymentMethod === 'E-Wallet' && result.paymentUrl) {
+          setGeneratedOrderId(`BOC-${result.orderId}`);
+          setPaymentUrl(result.paymentUrl); // Ini bakal otomatis nampilin layar Xendit!
+        } else {
+          // Kalau Tunai (COD), langsung tembus ke ResultScreen
+          navigation.navigate('Result', { orderId: `BOC-${result.orderId}` });
+        }
       }
     } catch (error) {
       console.error('Error post order:', error);
@@ -397,23 +406,22 @@ export default function DetailOrderScreen({ navigation }: Props) {
           />
 
           <Text style={styles.label}>Metode Pembayaran</Text>
-          <View style={styles.row}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
+            
             <TouchableOpacity 
-              style={[styles.radio, currentOrder.paymentMethod === 'COD' && styles.radioActive]} 
-              onPress={() => setPaymentDetails('COD')}
+              style={{ flex: 1, padding: 15, borderWidth: 1, borderColor: paymentMethod === 'Tunai' ? '#1e1e24' : '#ccc', borderRadius: 8, marginRight: 10, backgroundColor: paymentMethod === 'Tunai' ? '#f0f0f3' : '#fff', alignItems: 'center' }}
+              onPress={() => setPaymentMethod('Tunai')}
             >
-              <Text style={[styles.radioText, currentOrder.paymentMethod === 'COD' ? styles.textActive : styles.textInActive]}>
-                COD (Tunai)
-              </Text>
+              <Text style={{ fontWeight: 'bold', color: paymentMethod === 'Tunai' ? '#1e1e24' : '#666' }}>💵 Tunai (COD)</Text>
             </TouchableOpacity>
+
             <TouchableOpacity 
-              style={[styles.radio, currentOrder.paymentMethod === 'EWALLET' && styles.radioActive]} 
-              onPress={() => setPaymentDetails('EWALLET')}
+              style={{ flex: 1, padding: 15, borderWidth: 1, borderColor: paymentMethod === 'E-Wallet' ? '#1e1e24' : '#ccc', borderRadius: 8, backgroundColor: paymentMethod === 'E-Wallet' ? '#f0f0f3' : '#fff', alignItems: 'center' }}
+              onPress={() => setPaymentMethod('E-Wallet')}
             >
-              <Text style={[styles.radioText, currentOrder.paymentMethod === 'EWALLET' ? styles.textActive : styles.textInActive]}>
-                E-Wallet
-              </Text>
+              <Text style={{ fontWeight: 'bold', color: paymentMethod === 'E-Wallet' ? '#1e1e24' : '#666' }}>📱 E-Wallet / QRIS</Text>
             </TouchableOpacity>
+
           </View>
 
           <View style={styles.summaryContainer}>
@@ -516,6 +524,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
           </View>
         </View>
       </Modal>
+      
     </KeyboardAvoidingView>
   );
 }
