@@ -39,13 +39,16 @@ export default function DetailOrderScreen({ navigation }: Props) {
   const [contact, setContact] = useState('');
   const [fullAddress, setFullAddress] = useState(''); 
   const [addressNotes, setAddressNotes] = useState('');
-  const [serviceName, setServiceName] = useState(currentOrder.serviceType); // Default-nya nampilin ID dulu sblm data ke-load
+  
+  // 🔥 FIX 2: State buat sinkronisasi Nama & Harga Layanan dari Backend
+  const [serviceName, setServiceName] = useState(currentOrder.serviceType); 
+  const [servicePrice, setServicePrice] = useState(currentOrder.serviceFee);
+  const [totalPrice, setTotalPrice] = useState(currentOrder.totalFee);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   
-  // 🛠️ FIX 1: PISAHIN STATE LOADING BIAR GAK BENTROK
   const [isFetchingGPS, setIsFetchingGPS] = useState(false); 
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
   
@@ -53,7 +56,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false); 
 
   const [isMenuVisible, setIsMenuVisible] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('Tunai'); // Defaultnya Tunai
+  const [paymentMethod, setPaymentMethod] = useState('Tunai'); 
   const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
   const [generatedOrderId, setGeneratedOrderId] = useState<string>('');
   const webViewRef = useRef<WebView>(null);
@@ -82,33 +85,38 @@ export default function DetailOrderScreen({ navigation }: Props) {
       fetchAddressFromCoords(currentOrder.latitude, currentOrder.longitude);
     }
   }, []);
-  useEffect(() => {
-  const fetchServiceName = async () => {
-    try {
-      const response = await fetch('http://192.168.2.4:3000/api/services');
-      const result = await response.json();
-      
-      if (result.success) {
-        // Cocokin ID dari store sama data dari database
-        const matchedService = result.data.find(
-          (s: any) => s.id.toString() === currentOrder.serviceType.toString()
-        );
-        
-        if (matchedService) {
-          setServiceName(matchedService.name); // Timpa ID dengan nama aslinya
-        }
-      }
-    } catch (error) {
-      console.error('Gagal mengambil detail nama layanan:', error);
-    }
-  };
 
-  fetchServiceName();
-}, [currentOrder.serviceType]);
+  useEffect(() => {
+    const fetchServiceName = async () => {
+      try {
+        const response = await fetch('http://192.168.2.4:3000/api/services');
+        const result = await response.json();
+        
+        if (result.success) {
+          const matchedService = result.data.find(
+            (s: any) => s.id.toString() === currentOrder.serviceType.toString()
+          );
+          
+          if (matchedService) {
+            // 🔥 FIX 2: Kita timpa state dengan data segar dari Database biar MATCH!
+            setServiceName(matchedService.name); 
+            setServicePrice(Number(matchedService.price));
+            
+            // Hitung selisih biaya tambahan (misal: ongkos transport) dari halaman sebelumnya
+            const extraFee = currentOrder.totalFee - currentOrder.serviceFee;
+            setTotalPrice(Number(matchedService.price) + extraFee);
+          }
+        }
+      } catch (error) {
+        console.error('Gagal mengambil detail nama layanan:', error);
+      }
+    };
+
+    fetchServiceName();
+  }, [currentOrder.serviceType]);
 
   const handleResetToRealGPS = async () => {
-    setIsFetchingGPS(true); // Pake state khusus GPS
-    
+    setIsFetchingGPS(true); 
     try {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
@@ -136,7 +144,7 @@ export default function DetailOrderScreen({ navigation }: Props) {
     } catch (error) {
       Alert.alert('GPS Tidak Aktif', 'Nyalain dulu GPS HP lu cuy, terus pencet tombol ini lagi.');
     } finally {
-      setIsFetchingGPS(false); // Matiin loading GPS
+      setIsFetchingGPS(false);
     }
   };
 
@@ -153,54 +161,39 @@ export default function DetailOrderScreen({ navigation }: Props) {
 
   const handleSearchAddress = async () => {
     const query = searchQuery.trim();
-    
     if (!query) {
       Alert.alert('Peringatan', 'Ketik alamatnya dulu bro!');
       return;
     }
-
     if (query.length < 3) {
       Alert.alert('Peringatan', 'Ketik minimal 3 huruf buat nyari alamat (contoh: Ban...)!');
       return;
     }
 
-    setIsSearchingAddress(true); // Pake state khusus Pencarian Alamat
+    setIsSearchingAddress(true); 
     setHasSearched(false);
     try {
       const response = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=id&limit=5`,
-        { 
-          headers: { 
-            'User-Agent': `BarberApp_${Math.random().toString(36).substring(7)}`, 
-            'Accept': 'application/json' 
-          } 
-        }
+        { headers: { 'User-Agent': `BarberApp_${Math.random().toString(36).substring(7)}`, 'Accept': 'application/json' } }
       );
       
       const text = await response.text();
-      
       if (text.trim().startsWith('[')) {
         const data = JSON.parse(text);
-        
         if (data.length === 0) {
-          // Gak usah pake alert lagi, biar UI Empty State yang jalan
           setSearchResults([]);
         } else {
           setSearchResults(data);
         }
         setHasSearched(true);
       } else {
-        console.warn('Kena Limit Server Nominatim:', text);
-        Alert.alert(
-          'Server Peta Sibuk 🚦', 
-          'Pencarian alamat lagi kena limit dari server pusat. Coba geser-geser petanya secara manual aja dulu ya cuy!'
-        );
+        Alert.alert('Server Peta Sibuk 🚦', 'Pencarian alamat lagi kena limit. Coba geser petanya manual aja.');
       }
     } catch (error) {
-      console.error('Error nyari alamat:', error);
-      Alert.alert('Koneksi Error', 'Gagal mencari alamat. Pastikan kuota dan sinyal lu aman.');
+      Alert.alert('Koneksi Error', 'Gagal mencari alamat.');
     } finally {
-      setIsSearchingAddress(false); // Matiin loading Pencarian Alamat
+      setIsSearchingAddress(false); 
     }
   };
 
@@ -234,18 +227,20 @@ export default function DetailOrderScreen({ navigation }: Props) {
     }
 
     setCustomerDetails(name, contact, addressNotes);
+    // 🔥 FIX 2: Wajib sinkronisasi state lokal ke Store Zustand biar ResultScreen tau metodenya!
+    // cast to satisfy PaymentMethod typing in the store
+    setPaymentDetails(paymentMethod as any);
+    
     setIsSubmitting(true);
 
     try {
       const response = await fetch('http://192.168.2.4:3000/api/orders', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: userId || 1, 
-          layanan: currentOrder.serviceType,
-          harga: currentOrder.totalFee,
+          layanan: serviceName, // 🔥 FIX 2: Kirim NAMA, bukan ID layanan
+          harga: totalPrice,    // 🔥 FIX 2: Kirim Harga yang udah fix
           alamat: fullAddress, 
           catatanAlamat: addressNotes || '-',
           namaPenerima: name, 
@@ -257,22 +252,49 @@ export default function DetailOrderScreen({ navigation }: Props) {
       const result = await response.json();
 
       if (response.ok) {
-        // 🔥 LOGIC BARU: Kalau milih E-wallet & dapet URL Xendit, tahan di halaman ini buat nampilin WebView!
         if (paymentMethod === 'E-Wallet' && result.paymentUrl) {
           setGeneratedOrderId(`BOC-${result.orderId}`);
-          setPaymentUrl(result.paymentUrl); // Ini bakal otomatis nampilin layar Xendit!
+          setPaymentUrl(result.paymentUrl); 
         } else {
-          // Kalau Tunai (COD), langsung tembus ke ResultScreen
           navigation.navigate('Result', { orderId: `BOC-${result.orderId}` });
         }
       }
     } catch (error) {
-      console.error('Error post order:', error);
       Alert.alert('Koneksi Error', 'Gagal terhubung ke server backend.');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  // =========================================================================
+  // 🔥 FIX 1: PENJAGA GERBANG XENDIT (Kemarin kodingan ini lu lupa copas wkwk)
+  // =========================================================================
+  if (paymentUrl) {
+    return (
+      <View style={{ flex: 1, paddingTop: Platform.OS === 'ios' ? 40 : 24 }}>
+        <TouchableOpacity 
+            style={{ padding: 15, backgroundColor: '#fff', elevation: 3 }} 
+            onPress={() => setPaymentUrl(null)}
+        >
+            <Text style={{ color: '#e63946', fontWeight: 'bold', fontSize: 16 }}>✖ Batal Bayar / Tutup</Text>
+        </TouchableOpacity>
+        
+        <WebView 
+          source={{ uri: paymentUrl }} 
+          style={{ flex: 1 }}
+          onNavigationStateChange={(navState) => {
+            if (navState.url.includes('barberoncall.com/success')) {
+              setPaymentUrl(null); 
+              navigation.navigate('Result', { orderId: generatedOrderId }); 
+            } else if (navState.url.includes('barberoncall.com/failure')) {
+              setPaymentUrl(null); 
+              Alert.alert('Gagal', 'Pembayaran dibatalkan atau kadaluarsa.');
+            }
+          }}
+        />
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView 
@@ -425,8 +447,9 @@ export default function DetailOrderScreen({ navigation }: Props) {
           </View>
 
           <View style={styles.summaryContainer}>
-            <Text>Biaya Layanan: Rp {currentOrder.serviceFee.toLocaleString()}</Text>
-            <Text style={styles.total}>Total Biaya: Rp {currentOrder.totalFee.toLocaleString()}</Text>
+            {/* 🔥 FIX 2: Tampilkan Data State yang udah disinkron sama Database! */}
+            <Text>Biaya Layanan: Rp {servicePrice.toLocaleString()}</Text>
+            <Text style={styles.total}>Total Biaya: Rp {totalPrice.toLocaleString()}</Text>
           </View>
 
           <TouchableOpacity 
@@ -491,8 +514,6 @@ export default function DetailOrderScreen({ navigation }: Props) {
               </TouchableOpacity>
             </View>
 
-            {/* 🛠️ FIX 2: Hapus duplikat loading dari sini, cuma sisain yang di dalem ternary */}
-            
             {isSearchingAddress ? (
               <ActivityIndicator size="large" color="#1e1e24" style={{ marginVertical: 30 }} />
             ) : (
